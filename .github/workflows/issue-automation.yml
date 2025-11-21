@@ -100,24 +100,26 @@ jobs:
             if (t.includes('epic') && !existingLabels.includes('epic')) toAdd.add('epic');
             if (t.includes('maintenance') && !existingLabels.includes('maintenance')) toAdd.add('maintenance');
 
-            // Priority labels from title/body (highest wins)
+            // Priority labels from title/body (highest wins if multiple)
             const text = `${issue.title || ''} ${issue.body || ''}`.toLowerCase();
-            const criticalKeywords = ['critical','urgent','production','outage'];
-            const highKeywords = ['important','high','blocking'];
-            const lowKeywords = ['low','nice-to-have','minor'];
-            let priority = 'priority-medium';
-            if (criticalKeywords.some(k => text.includes(k))) {
-              priority = 'priority-critical';
-            } else if (highKeywords.some(k => text.includes(k))) {
-              priority = 'priority-high';
-            } else if (lowKeywords.some(k => text.includes(k))) {
-              priority = 'priority-low';
+            const priorityDefs = [
+              { name: 'priority-critical', rank: 4, keywords: ['critical','urgent','production','outage'] },
+              { name: 'priority-high', rank: 3, keywords: ['important','high','blocking'] },
+              { name: 'priority-medium', rank: 2, keywords: ['medium','normal'] },
+              { name: 'priority-low', rank: 1, keywords: ['low','nice-to-have','minor'] },
+            ];
+            let selected = { name: 'priority-medium', rank: 2 };
+            for (const def of priorityDefs) {
+              if (def.keywords.some(k => text.includes(k))) {
+                if (def.rank > selected.rank) selected = def;
+              }
             }
+            const desiredPriority = selected.name;
 
             // Remove any existing priority-* labels that differ from computed
             const existingPriority = existingLabels.filter(n => n && n.startsWith('priority-'));
             for (const p of existingPriority) {
-              if (p !== priority) {
+              if (p !== desiredPriority) {
                 try {
                   await github.rest.issues.removeLabel({ owner, repo, issue_number: issue.number, name: p });
                 } catch (e) {
@@ -126,7 +128,7 @@ jobs:
               }
             }
 
-            if (!existingLabels.includes(priority)) toAdd.add(priority);
+            if (!existingLabels.includes(desiredPriority)) toAdd.add(desiredPriority);
 
             const finalLabels = Array.from(toAdd);
             if (finalLabels.length > 0) {
@@ -209,13 +211,24 @@ jobs:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const issue = context.payload.issue;
-            if (!issue) return 'No issue in payload';
+            const payloadIssue = context.payload.issue;
+            if (!payloadIssue) return 'No issue in payload';
+
+            // Always work with refreshed issue state to observe labels from previous jobs
+            let issue;
+            try {
+              const { data } = await github.rest.issues.get({ owner, repo, issue_number: payloadIssue.number });
+              issue = data;
+            } catch (e) {
+              console.warn(`Failed to fetch refreshed issue: ${e.message}`);
+              issue = payloadIssue;
+            }
 
             const labels = (issue.labels || []).map(l => (typeof l === 'string' ? l : l.name));
-            const isBug = labels.includes('bug');
-            const isEpic = labels.includes('epic');
-            const isMaintenance = labels.includes('maintenance');
+            const titleLower = (issue.title || '').toLowerCase();
+            const isBug = labels.includes('bug') || titleLower.includes('bug');
+            const isEpic = labels.includes('epic') || titleLower.includes('epic');
+            const isMaintenance = labels.includes('maintenance') || titleLower.includes('maintenance');
 
             // First-time contributor in this repo
             let isFirstIssueInRepo = false;
@@ -247,9 +260,9 @@ jobs:
             }
 
             // Milestone for priority-high/critical
-            const isHigh = labels.includes('priority-high');
-            const isCritical = labels.includes('priority-critical');
-            if (isHigh || isCritical) {
+            const hasHigh = labels.includes('priority-high');
+            const hasCritical = labels.includes('priority-critical');
+            if (hasHigh || hasCritical) {
               try {
                 const { data: milestones } = await github.rest.issues.listMilestones({ owner, repo, state: 'open' });
                 const target = milestones.find(m => m.title === 'v1.0.0');
@@ -263,10 +276,7 @@ jobs:
 
             // Change status from needs-triage to needs-review
             try {
-              const hasNeedsTriage = labels.includes('needs-triage');
-              if (hasNeedsTriage) {
-                try { await github.rest.issues.removeLabel({ owner, repo, issue_number: issue.number, name: 'needs-triage' }); } catch (e) { if (e.status !== 404) console.warn(`Failed to remove needs-triage: ${e.message}`); }
-              }
+              try { await github.rest.issues.removeLabel({ owner, repo, issue_number: issue.number, name: 'needs-triage' }); } catch (e) { if (e.status !== 404) console.warn(`Failed to remove needs-triage: ${e.message}`); }
               const refreshed = await github.rest.issues.get({ owner, repo, issue_number: issue.number });
               const refreshedLabels = refreshed.data.labels.map(l => (typeof l === 'string' ? l : l.name));
               if (!refreshedLabels.includes('needs-review')) {
