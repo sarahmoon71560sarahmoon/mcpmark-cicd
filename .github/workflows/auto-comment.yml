@@ -17,20 +17,57 @@ jobs:
   auto-comment:
     runs-on: ubuntu-latest
     steps:
-      - name: Add thank you comment
+      - name: Ensure feature label exists
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.issues.getLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: 'feature'
+              });
+            } catch (error) {
+              if (error.status === 404) {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: 'feature',
+                  color: '0E8A16',
+                  description: 'New feature request'
+                });
+              }
+            }
+      - name: Check labels and comment
         uses: actions/github-script@v7
         with:
           script: |
             const { owner, repo } = context;
             let issue_number;
+            let issue;
             if (context.eventName === 'workflow_dispatch') {
               issue_number = context.payload.inputs.issue_number;
+              issue = (await github.rest.issues.get({
+                owner,
+                repo,
+                issue_number
+              })).data;
             } else {
               issue_number = context.payload.issue.number;
+              issue = context.payload.issue;
             }
+            const labels = issue.labels.map(l => l.name);
+            
+            let comment = "Thank you for your contribution!";
+            if (labels.includes('bug')) {
+              comment = "Thank you. We will fix it";
+            } else if (labels.includes('feature')) {
+              comment = "Thank you, we will consider to include this feature.";
+            }
+            
             await github.rest.issues.createComment({
               owner,
               repo,
-              issue_number: issue_number,
-              body: "Thank you for your contribution!"
+              issue_number,
+              body: comment
             });
