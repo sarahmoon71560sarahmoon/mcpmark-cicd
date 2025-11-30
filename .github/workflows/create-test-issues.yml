@@ -1,0 +1,72 @@
+name: Create Test Issues for Auto-Comment Bot
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/create-test-issues.yml'
+
+permissions:
+  issues: write
+
+jobs:
+  create-test-issues:
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ensure feature label exists
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              await github.rest.issues.getLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: 'feature'
+              });
+            } catch (error) {
+              if (error.status === 404) {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: 'feature',
+                  color: '0E8A16',
+                  description: 'New feature request'
+                });
+              }
+            }
+      - name: Create bug issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Bug report',
+              body: 'This is a test bug report created by the test workflow.',
+              labels: ['bug']
+            });
+      - name: Create feature issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Feature request',
+              body: 'This is a test feature request created by the test workflow.',
+              labels: ['feature']
+            });
+      - name: Create no-label issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: 'Documentation update',
+              body: 'This is a test documentation update with no label created by the test workflow.',
+              labels: []
+            });
